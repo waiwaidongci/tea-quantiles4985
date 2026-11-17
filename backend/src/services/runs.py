@@ -4,14 +4,16 @@ from redis import Redis
 from sqlalchemy import select
 from fastapi import HTTPException
 from src.models.run import Run
+from src.models.study import Study
 from src.models.review import Review
 from src.services import studies
 from src.services.domain_validation import validate_parameters
 from src.services.audits import log
 from src.utils.serializers import record,now,checksum
+from src.services.sealing import ensure_open
 
 def create(db,data,user):
-    studies.require(db,data.study_id)
+    ensure_open(studies.require_locked(db,data.study_id))
     rows=studies.observations(db,data.study_id)
     if not rows: raise HTTPException(422,'先录入至少一条业务观测')
     try: params=validate_parameters(data.parameters)
@@ -25,15 +27,32 @@ def create(db,data,user):
 def get(db,id):
     run=db.get(Run,id)
     if not run: raise HTTPException(404,'运行不存在')
+    _run_study(db,run)
     result=record(run);review=db.scalar(select(Review).where(Review.run_id==id));result['review']=record(review) if review else None
     return result
 
 def list_runs(db):
-    return [get(db,x) for x in db.scalars(select(Run.id).order_by(Run.id.desc()))]
+    data=[]
+    sealed=set(db.scalars(select(Study.id).where(Study.sealed_at.is_not(None))))
+    for id in db.scalars(select(Run.id).order_by(Run.id.desc())):
+        if db.get(Run,id).study_id in sealed: data.append(sealed_stub(db,id))
+        else: data.append(get(db,id))
+    return data
+
+
+def sealed_stub(db,id):
+    # Sealed run: no parameters, snapshot, result, error text or review content.
+    run=db.get(Run,id)
+    return {'id':run.id,'study_id':run.study_id,'name':run.name,'status':'destroyed','parameters':{},'snapshot':[],'checksum':'','result':None,'error':'','created_at':run.created_at,'destroyed_at':run.destroyed_at,'destruction_id':run.destruction_id,'review':None,'sealed':True}
+
+
+def _run_study(db,run):
+    return ensure_open(db.get(Study,run.study_id))
 
 def approve(db,id,data,user):
     run=db.get(Run,id)
     if not run: raise HTTPException(404,'运行不存在')
+    _run_study(db,run)
     if run.status!='completed': raise HTTPException(409,'只能复核已完成运行')
     if db.scalar(select(Review).where(Review.run_id==id)): raise HTTPException(409,'已复核，记录不可覆盖')
     obj=Review(run_id=id,note=data.note,author=user.email,created_at=now());db.add(obj);log(db,user,'review.approve',f'{id}: {data.note}');db.commit();return record(obj)

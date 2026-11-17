@@ -12,4 +12,6 @@ class DistributionRun(Base):
     result=Column(JSON,nullable=True)
     error=Column(Text,default='')
     created_at=Column(String(40),nullable=False)
+    destroyed_at=Column(String(40),nullable=True)
+    destruction_id=Column(Integer,nullable=True)
 Run=DistributionRun

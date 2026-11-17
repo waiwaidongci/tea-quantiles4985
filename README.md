@@ -13,6 +13,14 @@
 - 每次运行冻结参数、观测和SHA256。Redis任务由独立worker计算，写DB与共享产物卷；输入修改不会改写历史结果。
 - 负责人复核不可覆盖；审计记录登录、数据改动、排队、复核与导出；240请求/分钟限流、全局可恢复错误。
 
+## 授权撤销销毁
+- 负责人按批次与源记录编号发起销毁：`POST /destructions`（`study_id` + `source_keys`）。同一指纹重复提交复用原任务，不新增任务。
+- 发起即封存受影响批次（`studies.sealed_at`）。此后该批次的源记录读写、新建运行、运行详情、复核、导出与列表内容全部返回 423，不泄露原值；未受影响批次照常可用。
+- 清理按顺序：删除该批次目标源观测 → 从冻结输入中移除目标行 → 清空全部结果 → 删除共享产物卷副本、复核留档并改写复核留痕正文 → 逐项核对。核对不通过则任务记 `failed` 并保留定位编号；`POST /destructions/{id}/retry` 可恢复，重试不新增任务。
+- 清理完成只保留不含原值的凭据：源记录编号的 SHA256 证明、删除计数、运行编号、核对结果与时间；任务本身不再保留定位编号。状态轨迹 `pending→cleaning→completed/failed` 可查。
+- 并发：写入口与封存争用批次行锁；worker 在计算前后两次在行锁下复查封存，晚到结果直接丢弃且不写产物文件。单 worker 与 `create_all` 增量列升级见 `backend/migrations/README.md`。
+- 页面“销毁凭据”可发起任务、查看状态轨迹与凭据、恢复失败清理。端到端验证：`python3 backend/tests/test_destruction_e2e.py`（依赖 `backend/requirements-dev.txt`，SQLite + fakeredis，无需 Docker）。
+
 ## 快速启动
 ```bash
 cp .env.example .env
@@ -50,7 +58,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 环境变量 `.env.example`：COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、DB_PASSWORD、JWT_SECRET、SEED_DEMO。开发时在本地venv安装backend/requirements.txt，设置DATABASE_URL、REDIS_URL、JWT_SECRET再运行uvicorn；前端开发经Nginx代理 `/api/` 到不带前缀的API。
 
-共享枚举：角色admin/analyst/viewer和队列queued/running/completed/failed；后端`src/constants/enums.py`、认证与worker使用相同值；前端`src/types/enums.js`、状态与角色界面使用相同值。Google Fonts：Noto Serif SC + IBM Plex Mono；断网使用serif/monospace回退。
+共享枚举：角色admin/analyst/viewer、运行态queued/running/completed/failed/destroyed与销毁态pending/cleaning/completed/failed；后端`src/constants/enums.py`、认证与worker使用相同值；前端`src/types/enums.js`、状态与角色界面使用相同值。Google Fonts：Noto Serif SC + IBM Plex Mono；断网使用serif/monospace回退。
 
 ## 算法输入、失败态与复现
 输入为选定批次全部观测和参数，输出核心数值、明细、解释；参数经后端严格白名单和范围验证。中位数置信区间描述估计不确定性，不是下一份茶样的预测区间。。空批次拒绝；不完整字段/非有限数/非法计数拒绝；常量相关列与不足样本使任务failed并保留错误。固定seed42、输入checksum相同可复现。独立oracle：按线性插值手算分位数；固定seed重采样复现；常量与空组边界。

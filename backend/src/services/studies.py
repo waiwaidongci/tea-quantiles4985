@@ -5,11 +5,16 @@ from src.models.observation import Observation
 from src.services.domain_validation import validate_values
 from src.services.audits import log
 from src.utils.serializers import record
+from src.services.sealing import ensure_open
 
 def list_studies(db):
     data=[]
     for s in db.scalars(select(Study).order_by(Study.id)):
-        x=record(s);x['row_count']=db.scalar(select(func.count()).select_from(Observation).where(Observation.study_id==s.id));data.append(x)
+        x=record(s)
+        # Sealed lots keep their identity for traceability but expose no counts.
+        x['row_count']=None if s.sealed_at else db.scalar(select(func.count()).select_from(Observation).where(Observation.study_id==s.id))
+        x['sealed']=bool(s.sealed_at)
+        data.append(x)
     return data
 
 def create(db,data,user):
@@ -21,11 +26,18 @@ def require(db,id):
     if not s: raise HTTPException(404,'业务批次不存在')
     return s
 
+def require_locked(db,id):
+    # Row lock serialises writers with the seal transaction.
+    s=db.scalar(select(Study).where(Study.id==id).with_for_update())
+    if not s: raise HTTPException(404,'业务批次不存在')
+    return s
+
 def observations(db,id):
-    require(db,id);return [record(x) for x in db.scalars(select(Observation).where(Observation.study_id==id).order_by(Observation.id))]
+    ensure_open(require(db,id))
+    return [record(x) for x in db.scalars(select(Observation).where(Observation.study_id==id).order_by(Observation.id))]
 
 def save_observation(db,id,data,user,row_id=None):
-    require(db,id)
+    ensure_open(require_locked(db,id))
     try: values=validate_values(data.values)
     except (ValueError,TypeError) as e: raise HTTPException(422,str(e))
     other=db.scalar(select(Observation).where(Observation.study_id==id,Observation.source_key==data.source_key))

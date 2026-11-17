@@ -10,6 +10,7 @@ from src.schemas.run import RunInput
 from src.schemas.review import ReviewInput
 from src.controllers import research
 from src.services import runs,studies
+from src.services.sealing import ensure_open
 from src.models.audit import Audit
 from src.models.observation import Observation
 from src.services.audits import log
@@ -31,6 +32,7 @@ def add(id:int,data:ObservationInput,db=Depends(get_db),user=Depends(writer)): r
 def update(id:int,row_id:int,data:ObservationInput,db=Depends(get_db),user=Depends(writer)): return research.save_row(db,id,data,user,row_id)
 @router.delete('/studies/{id}/observations/{row_id}')
 def remove(id:int,row_id:int,db=Depends(get_db),user=Depends(writer)):
+    ensure_open(studies.require(db,id))
     row=db.get(Observation,row_id)
     if not row or row.study_id!=id: raise HTTPException(404,'记录不存在')
     db.delete(row);log(db,user,'observation.delete',row_id);db.commit();return {'deleted':True}

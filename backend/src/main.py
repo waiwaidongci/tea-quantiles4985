@@ -3,14 +3,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import text
 from redis import Redis
-from src.config.database import Base,engine
-from src.models import user,study,observation,run,review,audit
-from src.routes import auth,research
+from src.config.database import engine
+from src.models import user,study,observation,run,review,audit,destruction
+from src.routes import auth,research,destruction as destruction_routes
+from src.config.schema import ensure_schema
 from src.middlewares.errors import ErrorMiddleware
 from src.middlewares.rate_limit import RateLimitMiddleware
 @asynccontextmanager
 async def lifespan(app):
-    Base.metadata.create_all(engine)
+    ensure_schema(engine)
     if os.environ.get('SEED_DEMO')=='true':
         try:
             from scripts.seed_demo import seed
@@ -20,7 +21,7 @@ async def lifespan(app):
 app=FastAPI(lifespan=lifespan,title='Research Application')
 app.add_middleware(ErrorMiddleware)
 app.add_middleware(RateLimitMiddleware)
-app.include_router(auth.router);app.include_router(research.router)
+app.include_router(auth.router);app.include_router(research.router);app.include_router(destruction_routes.router)
 @app.get('/health')
 def health():
     with engine.connect() as conn: conn.execute(text('SELECT 1'))

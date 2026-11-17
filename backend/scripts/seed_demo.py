@@ -1,7 +1,8 @@
 import json
 import numpy as np
 from sqlalchemy import select,func
-from src.config.database import Base,engine,Session
+from src.config.database import engine,Session
+from src.config.schema import ensure_schema
 from src.config.domain import DOMAIN
 from src.models.user import User
 from src.models.study import Study
@@ -10,7 +11,7 @@ from src.models import run,review,audit
 from src.utils.security import hash_password
 
 def seed():
-    Base.metadata.create_all(engine)
+    ensure_schema(engine)
     rng=np.random.default_rng(42)
     i=DOMAIN['index']
     with Session() as db:
